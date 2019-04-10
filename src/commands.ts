@@ -12,28 +12,42 @@ var commonOptions = function(workspace) {
 	return opts;
 }
 
-var spawnWithBash = function(cmd, opts): child_process.ChildProcess {
-	if (platform().match(/darwin|linux/)) {
+var constructBashCommand = function(shell, cmd): Array<String> {
+	if (shell.endsWith('bash') || shell.endsWith('zsh')) {
+		var shellCommand = [shellEscape(cmd)];
+		shellCommand.unshift('-c');
+		if (shell.endsWith('zsh')) {
+			shellCommand.unshift('-l');
+		} else {
+			shellCommand.unshift('-l');
+		}
+
+		shellCommand.unshift(shell)
+
+		console.log('Expanded command for shell', shell, shellCommand);
+		return shellCommand;
+	} else {
+		return cmd;
+	}
+}
+
+var spawnWithBash = function(cmd, opts, useWSL:Boolean = false): child_process.ChildProcess {
+	if (useWSL || platform().match(/darwin|linux/)) {
 		// OSX and Linux need to use an explicit login shell in order to find
 		// the correct Ruby environment through installation managers like rvm
 		// and rbenv.
 		var shell = process.env.SHELL;
+
+		if(useWSL) {
+			shell = child_process.execSync("wsl.exe -- echo $SHELL").toString().trim();
+		}
+
 		if (!shell) {
 			shell = '/bin/bash';
 		}
-		if (shell.endsWith('bash') || shell.endsWith('zsh')) {
-			var shellArgs = [shellEscape(cmd)];
-			shellArgs.unshift('-c');
-			if (shell.endsWith('zsh')) {
-				shellArgs.unshift('-l');
-			} else {
-				shellArgs.unshift('-l');
-			}
-			console.log('Expanded command for shell', shell, shellArgs);
-			return child_process.spawn(shell, shellArgs, opts);
-		} else {
-			return crossSpawn(cmd.shift(), cmd, opts);
-		}
+		var bashCmd = constructBashCommand(shell, cmd);
+		if(useWSL) bashCmd.unshift('wsl.exe', '--')
+		return crossSpawn(bashCmd.shift(), bashCmd, opts);
 	} else {
 		return crossSpawn(cmd.shift(), cmd, opts);
 	}
@@ -47,10 +61,10 @@ export function solargraphCommand(args: string[], configuration: Configuration):
 		cmd.push(configuration.commandPath);
 	}
 	var env = commonOptions(configuration.workspace);
-	if (configuration.useBundler || configuration.commandPath == 'solargraph') {
+	if (configuration.useWSL || configuration.useBundler || configuration.commandPath == 'solargraph') {
 		// When using a bare `bundle` or `solargraph` command, apply shell
 		// magic to make sure Ruby installation managers work
-		return spawnWithBash(cmd.concat(args), env);
+		return spawnWithBash(cmd.concat(args), env, configuration.useWSL);
 	} else {
 		// When using a specified command path, assume shell magic is not
 		// necessary
@@ -61,20 +75,26 @@ export function solargraphCommand(args: string[], configuration: Configuration):
 
 export function gemCommand(args: string[], configuration: Configuration): child_process.ChildProcess {
 	let cmd = [];
+	if (configuration.useWSL) {
+		cmd.push('wsl.exe', '--')
+	}
 	if (configuration.useBundler && configuration.workspace) {
 		cmd.push(configuration.bundlerPath, 'exec');
 	}
 	cmd.push('gem');
 	var env = commonOptions(configuration.workspace);
-	return spawnWithBash(cmd.concat(args), env);
+	return spawnWithBash(cmd.concat(args), env, configuration.useWSL);
 }
 
 export function yardCommand(args: string[], configuration: Configuration): child_process.ChildProcess {
 	let cmd = [];
+	if (configuration.useWSL) {
+		cmd.push('wsl.exe', '--')
+	}
 	if (configuration.useBundler && configuration.workspace) {
-		cmd.push(configuration.bundlerPath, 'exec');
+		cmd.push(configuration.bundlerPath, 'exec', configuration.useWSL);
 	}
 	cmd.push('yard');
 	var env = commonOptions(configuration.workspace);
-	return spawnWithBash(cmd.concat(args), env);
+	return spawnWithBash(cmd.concat(args), env, configuration.useWSL);
 }
